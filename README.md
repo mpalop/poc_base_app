@@ -1,4 +1,6 @@
-# Cloudformation script
+# Base application cloudformation script 
+
+This is a POC of a Cloudformation that deploys a sample Java app. The only thing to take into account is that Java app needs to be called with a special header. 
 
 #### Assumptions: 
 * I used a substacks approach to make it more clear the code maintenance
