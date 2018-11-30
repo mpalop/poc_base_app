@@ -17,7 +17,7 @@ usage: deploy.sh IAM_Profile Action:create|update
 ```
 An example of the execution:
 ```bash
-cloudformation ./deploy.sh sistemas create
+cloudformation ./deploy.sh manel-test create
 ### Validating -> computing.yaml
 {
     "CapabilitiesReason": "The following resource(s) require capabilities: [AWS::IAM::InstanceProfile, AWS::IAM::Role]",
@@ -116,7 +116,7 @@ cloudformation ./deploy.sh sistemas create
 
 Successfully packaged artifacts and wrote output template to file tmp/stack.package.yaml.
 Execute the following command to deploy the packaged template
-aws cloudformation deploy --template-file /Users/manel/work/glovo/cloudformation/tmp/stack.package.yaml --stack-name <YOUR STACK NAME>
+aws cloudformation deploy --template-file /Users/manel/work/test/cloudformation/tmp/stack.package.yaml --stack-name <YOUR STACK NAME>
 {
     "CapabilitiesReason": "The following resource(s) require capabilities: [AWS::CloudFormation::Stack]",
     "Description": "Main File",
