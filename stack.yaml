@@ -1,0 +1,55 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Main File
+
+Resources:
+# VPC Stack
+  VpcStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      Parameters:
+        ServiceNamePrefix:     !Ref AWS::StackName
+
+      TemplateURL: vpc.yaml
+      TimeoutInMinutes: 5
+
+# ELB Stack
+  LoadBalancerStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      Parameters:
+        ServiceNamePrefix:     !Ref AWS::StackName
+        Subnetworks:           !Join
+        - ","
+        - - !GetAtt VpcStack.Outputs.PublicSubnetAId
+          - !GetAtt VpcStack.Outputs.PublicSubnetBId
+          - !GetAtt VpcStack.Outputs.PublicSubnetCId
+        VpcId:                 !GetAtt VpcStack.Outputs.VpcId
+
+      TemplateURL: elb.yaml
+      TimeoutInMinutes: 5
+
+# Computing Stack
+  ComputingStak:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      Parameters:
+        ServiceNamePrefix:     !Ref AWS::StackName
+        Subnetworks:           !Join
+        - ","
+        - - !GetAtt VpcStack.Outputs.PrivateSubnetAId
+          - !GetAtt VpcStack.Outputs.PrivateSubnetBId
+          - !GetAtt VpcStack.Outputs.PrivateSubnetCId
+        VpcId:                 !GetAtt VpcStack.Outputs.VpcId
+        MinSize:               1
+        MaxSize:               1
+        InstanceType:          t2.micro
+        ImageId:               ami-0a5e707736615003c    #FIXME: this is a simplification
+        KeyName:               manel-test
+
+        TargetGroupArn:        !GetAtt LoadBalancerStack.Outputs.TargetGroupArn
+        LoadBalancerSgId:      !GetAtt LoadBalancerStack.Outputs.LoadBalancerSgId
+        LoadBalancerArn:       !GetAtt LoadBalancerStack.Outputs.LoadBalancerArn
+
+      TemplateURL: computing.yaml
+      TimeoutInMinutes: 5
+

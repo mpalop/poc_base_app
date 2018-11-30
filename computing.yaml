@@ -1,0 +1,299 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Computing (SNS, LaunchConfiguration, AutoscalingGroup, ScalePolicies)[test]
+
+Parameters:
+  ServiceNamePrefix:
+    Type:   String
+
+  Subnetworks:
+    Type:   String
+  VpcId:
+    Type:   String
+
+  MinSize:
+    Type:   String
+  MaxSize:
+    Type:   String
+  InstanceType:
+    Type:   String
+  ImageId:
+    Type:   String
+  KeyName:
+    Type:   String
+
+  TargetGroupArn:
+    Type:   String
+  LoadBalancerSgId:
+    Type:   String
+  LoadBalancerArn:
+    Type:   String
+
+Resources:
+
+  AsgInstancesSg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId:                !Ref VpcId
+      GroupName:            !Sub "${ServiceNamePrefix}-asg-instances-sg"
+      GroupDescription:     Security Group of the instances
+      SecurityGroupIngress:
+      - Description:  Full Access
+        #CidrIp:                92.59.122.140/32   #FIXME: 0.0.0.0/0
+        SourceSecurityGroupId: !Ref LoadBalancerSgId
+        IpProtocol:   tcp
+        FromPort:     80
+        ToPort:       80
+
+      SecurityGroupEgress:
+      - Description:  Full egress
+        CidrIp:       0.0.0.0/0
+        IpProtocol:   -1
+        FromPort:     -1
+        ToPort:       -1
+      Tags:
+      - Key:    Purpose
+        Value:  Test
+
+  NotificationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "${ServiceNamePrefix}-notifications"
+
+  AsgInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+              - "ec2.amazonaws.com"
+          Action:
+            - "sts:AssumeRole"
+      Policies:
+      - PolicyName: !Sub "${ServiceNamePrefix}-mess-with-asg"
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+          - Effect: Allow
+            Action:
+            - "elasticloadbalancing:Describe*"
+            - "elasticloadbalancing:RegisterInstancesWithLoadBalancer"
+            - "elasticloadbalancing:DeregisterInstancesFromLoadBalancer"
+            Resource:
+            - !Ref LoadBalancerArn
+
+  AsgInstancesInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: AsgTestInstanceRole
+      Roles:
+      - !Ref AsgInstanceRole
+
+  LaunchConfiguration:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Metadata:
+      AWS::CloudFormation::Init:
+        config:
+          packages:
+            yum:
+              htop: []
+              wget: []
+              findutils: []
+              httpd: []
+              java-1.8.0-openjdk: []
+          users:
+            deploy:
+              groups:
+              - "adm"
+              uid:     "1001"
+              homeDir: "/opt/deploy"
+          commands:
+            01_download_jar:
+              command: |
+                echo downloading java
+                mkdir -p /opt/deploy
+                cd /opt/deploy
+                wget https://s3-eu-west-1.amazonaws.com/glovo-public/systems-engineer-interview-1.0-SNAPSHOT.jar
+                cp systems-engineer-interview-1.0-SNAPSHOT.jar systems-engineer-interview.jar
+
+            02_start_java:
+              command: |
+                /etc/init.d/test start
+
+            03_restart_apache:
+              command: |
+                systemctl restart httpd
+
+          files:
+            "/etc/init.d/test":
+              content: |
+                #!/bin/sh
+                #### chkconfig: - 99 10
+                . /etc/rc.d/init.d/functions
+
+                USER='deploy'
+                PIDFILE='/var/run/test.pid'
+                DAEMON='cd /opt/deploy;java -jar systems-engineer-interview.jar server'
+
+                case "$1" in
+                start)
+                  # checking pid file
+                  touch $PIDFILE
+                  chown deploy:deploy $PIDFILE
+
+                  echo -n "Starting Test....: "
+                  daemon --user deploy --pidfile $PIDFILE "${DAEMON} > /dev/null 2>&1 & echo \$! > ${PIDFILE}"
+                  RETVAL=$?
+                  echo $RETVAL
+                ;;
+                stop)
+                  echo -n "Stopping Test....: "
+                  killproc -p $PIDFILE -d 10 "$DAEMON"
+                  echo "Done"
+                ;;
+                status)
+                  echo -n "Showing Test status...: "
+                  if [ -f $PIDFILE ];then
+                    STATUS=$(ps aux|grep $(cat $PIDFILE) |grep systems-engineer-interview)
+                    if [ -z "$STATUS" ];then
+                      echo "stopped"
+                    else
+                      echo "running"
+                    fi
+                  else
+                    echo "stopped"
+                  fi
+                ;;
+                *)
+                  N=/etc/init.d/$0
+                  echo "Usage: $N {start|stop|status}" >&2
+                  exit 1
+                ;;
+                esac
+                exit 0
+              mode: '000750'
+              owner: root
+              group: root
+            "/etc/httpd/conf.d/test.conf":
+              content: |
+                NameVirtualHost *
+                <VirtualHost *:80>
+
+                  ErrorLog	/var/log/httpd/test_access.log
+                  CustomLog   /var/log/httpd/test_error.log combined
+
+                  ProxyPass "/" http://localhost:8080/
+                  ProxyPassReverse "/" http://localhost:8080/
+
+                  RequestHeader set X-Glovo-Systems-Engineer-Candidate "1"
+                </VirtualHost>
+    Properties:
+      InstanceType:       !Ref InstanceType
+      ImageId:            !Ref ImageId
+      KeyName:            !Ref KeyName
+      IamInstanceProfile: !Ref AsgInstancesInstanceProfile
+
+      SecurityGroups:
+      - !Ref AsgInstancesSg
+
+      InstanceMonitoring: true
+
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          aws configure set region ${AWS::Region}
+          yum update -y
+          /opt/aws/bin/cfn-init --stack ${AWS::StackName} --resource LaunchConfiguration --region ${AWS::Region}
+          /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource LaunchConfiguration --region ${AWS::Region}
+
+      BlockDeviceMappings:
+      - DeviceName: /dev/xvda
+        Ebs:
+          VolumeType:          gp2
+          DeleteOnTermination: true
+          VolumeSize:          8
+
+
+  AutoscalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      VPCZoneIdentifier:        !Split [",", !Ref Subnetworks]
+      LaunchConfigurationName:  !Ref LaunchConfiguration
+      HealthCheckType:          EC2   #FIXME: temporary until everything works
+      HealthCheckGracePeriod:   180
+      MinSize:                  !Ref MinSize
+      MaxSize:                  !Ref MaxSize
+
+      TargetGroupARNs:
+      - !Ref TargetGroupArn
+      NotificationConfiguration:
+        TopicARN:               !Ref NotificationTopic
+        NotificationTypes:
+        - autoscaling:EC2_INSTANCE_LAUNCH
+        - autoscaling:EC2_INSTANCE_LAUNCH_ERROR
+        - autoscaling:EC2_INSTANCE_TERMINATE
+        - autoscaling:EC2_INSTANCE_TERMINATE_ERROR
+      Tags:
+      - Key: Purpose
+        Value: Testing
+        PropagateAtLaunch: True
+
+  ScaleUpPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      PolicyType:             SimpleScaling
+      AdjustmentType:         ChangeInCapacity
+      AutoScalingGroupName:   !Ref AutoscalingGroup
+      Cooldown:               60
+      ScalingAdjustment:      1
+
+  ScaleDownPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      PolicyType:             SimpleScaling
+      AdjustmentType:         ChangeInCapacity
+      AutoScalingGroupName:   !Ref AutoscalingGroup
+      Cooldown:               60
+      ScalingAdjustment:      -1
+
+  CPUAlarmHigh:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      EvaluationPeriods:  '1'
+      Statistic:          Average
+      Threshold:          '80'
+      AlarmDescription:   Alarm if CPU at 80% or metric is gone (instance is down)
+      Period: '60'
+      AlarmActions:
+      - !Ref ScaleUpPolicy
+      Namespace:          AWS/EC2
+      Dimensions:
+      - Name:             AutoScalingGroupName
+        Value:            !Ref AutoscalingGroup
+      ComparisonOperator: GreaterThanThreshold
+      MetricName:         CPUUtilization
+
+  CPUAlarmLow:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      EvaluationPeriods:  '1'
+      Statistic:          Average
+      Threshold:          '20'
+      AlarmDescription:   Alarm if CPU at 20%
+      Period: '60'
+      AlarmActions:
+      - !Ref ScaleDownPolicy
+      Namespace:          AWS/EC2
+      Dimensions:
+      - Name:             AutoScalingGroupName
+        Value:            !Ref AutoscalingGroup
+      ComparisonOperator: LessThanThreshold
+      MetricName:         CPUUtilization
+
+Outputs:
+  NotificationTopicArn:
+    Description: NotificationTopic To suscribe
+    Value:
+      Ref: NotificationTopic
+

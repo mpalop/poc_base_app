@@ -1,0 +1,93 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: ELB (Public and Private Subnets, IGW, NatGW, Route Tables)[Assignment]
+
+Parameters:
+  ServiceNamePrefix:
+    Type: String
+  Subnetworks:
+    Type: String
+  VpcId:
+    Type: String
+
+Resources:
+  ElbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId:                !Ref VpcId
+      GroupName:            !Sub "${ServiceNamePrefix}-elb-sg"
+      GroupDescription:     Security Group to access to the ELB
+      SecurityGroupIngress:
+      - Description:  Full Access
+        CidrIp:       0.0.0.0/0
+        IpProtocol:   tcp
+        FromPort:     80
+        ToPort:       80
+
+      SecurityGroupEgress:
+      - Description:  Full egress
+        CidrIp:       0.0.0.0/0
+        IpProtocol:   -1
+        FromPort:     -1
+        ToPort:       -1
+      Tags:
+      - Key:    Purpose
+        Value:  Test
+
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name:       !Sub "${ServiceNamePrefix}-elb"
+      Scheme:     internet-facing
+      SecurityGroups:
+        - !Ref ElbSecurityGroup
+      Subnets:    !Split [",", !Ref Subnetworks]
+      Tags:
+        - Key:    Purpose
+          Value:  Test
+      Type:          application
+      IpAddressType: ipv4
+
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckIntervalSeconds: 30
+      HealthCheckProtocol:        "HTTP"
+      HealthCheckTimeoutSeconds:  5
+      HealthyThresholdCount:      3
+      HealthCheckPort:            80
+      HealthCheckPath:            /
+      Matcher:
+        HttpCode: 200
+      Port:     80
+      Protocol: HTTP
+
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: "10"
+
+      UnhealthyThresholdCount: 5
+      VpcId: !Ref VpcId
+      Tags:
+      - Key:   Purpose
+        Value: Test
+
+  Listener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+      - Type:           forward
+        TargetGroupArn: !Ref TargetGroup
+      LoadBalancerArn:  !Ref LoadBalancer
+      Port: 80
+      Protocol: HTTP
+
+# ------
+Outputs:
+  TargetGroupArn:
+    Value: !Ref TargetGroup
+
+  LoadBalancerSgId:
+    Value: !Ref ElbSecurityGroup
+
+  LoadBalancerArn:
+    Value:  !Ref LoadBalancer
